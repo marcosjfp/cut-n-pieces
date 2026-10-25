@@ -4,6 +4,7 @@
   const $$ = (s, root = document) => [...root.querySelectorAll(s)];
   const palette = ['#3d8862', '#b87824', '#587fbd', '#a05a92', '#308b88', '#bd6050', '#8666b2', '#788631'];
   const fmt = n => Number(n.toFixed(6)).toLocaleString('en-US', { maximumFractionDigits: 6, useGrouping: false });
+  const countLabel = (n, noun) => `${n} ${noun}${n === 1 ? '' : 's'}`;
   const area = n => `${(n / 1e6).toLocaleString('en-US', { maximumFractionDigits: 4 })} m²`;
   const partList = $('#part-list');
   let lastPlan = null, sheetIndex = 0, selectedCut = -1, revision = 0, busy = false, stale = false;
@@ -47,6 +48,7 @@
     });
     $('#add-part').disabled = partList.children.length >= 50;
     $('#sheet-quantity').disabled = capacity;
+    $('#objective-control').hidden = capacity;
     $('#mode-hint').textContent = capacity ? 'Use one piece size. Find the best quantity on one sheet; the quantity field is ignored.' : 'Enter the sizes and quantities you need.';
   }
   function addPart(width = '', height = '', quantity = 1, focus = false) {
@@ -72,7 +74,7 @@
       widthUnit: $('[aria-label="Sheet width units"]').value, heightUnit: $('[aria-label="Sheet height units"]').value,
       partUnit: $('#part-unit').value, sheets: $('#sheet-quantity').value,
       kerf: $('#kerf').value, trim: $('#trim').value, rotate: $('#allow-rotation').checked,
-      mode: $('[name="mode"]:checked').value,
+      mode: $('[name="mode"]:checked').value, objective: $('#objective').value,
       parts: $$('.part-row').map(row => ({ width: $('.part-width', row).value, height: $('.part-height', row).value, quantity: $('.qty-input', row).value }))
     };
   }
@@ -82,6 +84,7 @@
     for (const value of [job.width, job.height, job.sheets, job.kerf, job.trim, ...job.parts.flatMap(p => p ? [p.width, p.height, p.quantity] : [null])]) {
       if (!['string', 'number'].includes(typeof value) || String(value).length > 30 || (value !== '' && !Number.isFinite(Number(value)))) throw new Error('The job file contains invalid dimensions or quantities.');
     }
+    if (job.objective !== undefined && !['material', 'pieces'].includes(job.objective)) throw new Error('The job file contains an invalid optimization priority.');
     if (job.name !== undefined && typeof job.name !== 'string') throw new Error('The job reference must be text.');
     return job;
   }
@@ -93,6 +96,7 @@
     $('[aria-label="Sheet height units"]').value = job.heightUnit;
     $('#part-unit').value = job.partUnit;
     $('#allow-rotation').checked = job.rotate;
+    $('#objective').value = job.objective || 'material';
     $(`[name="mode"][value="${job.mode}"]`).checked = true;
     partList.replaceChildren();
     job.parts.forEach(p => addPart(p.width, p.height, p.quantity));
@@ -121,7 +125,7 @@
       sheet: { width: mm(job.width, job.widthUnit), height: mm(job.height, job.heightUnit), quantity: job.mode === 'capacity' ? 1 : Number(job.sheets) },
       parts: job.parts.map((p, i) => ({ id: i, width: mm(p.width, job.partUnit), height: mm(p.height, job.partUnit), quantity: job.mode === 'capacity' ? 1 : Number(p.quantity) })),
       kerf: job.kerf === '' ? NaN : Number(job.kerf), trim: job.trim === '' ? NaN : Number(job.trim),
-      rotateParts: job.rotate, mode: job.mode, name: job.name
+      rotateParts: job.rotate, mode: job.mode, objective: job.objective, name: job.name
     };
     return Cutwise.validate(data);
   }
@@ -219,6 +223,8 @@
       `This sheet: ${(100 * sheet.usedArea / (data.sheet.width * data.sheet.height)).toFixed(1)}% used`,
       `Offcuts: ${area(remainingArea)}`, `Blade loss: ${area(sheet.kerfArea)}`, ...(data.trim ? [`Reserved edge: ${area(trimArea)}`] : [])
     ].map(t => node('span', t)));
+    const firstCut = sheet.cuts[0];
+    $('#cut-recommendation').textContent = firstCut ? `Suggested start: ${firstCut.axis === 'x' ? 'vertical' : 'horizontal'} cut, ${fmt(firstCut.offset)} mm from the usable rectangle’s ${firstCut.axis === 'x' ? 'left' : 'top'} edge. ${data.trim ? 'Prepare the trimmed rectangle first. ' : ''}Compared ${result.strategiesCompared} layouts across the available sheets. Follow the numbered sequence below.` : 'No separation cuts are needed: the piece matches the usable sheet.';
     $('#cut-count').textContent = `(${sheet.cuts.length})`;
     $('#cut-help').textContent = `${preparation(data)} Select a step to highlight it. Offsets mark the finished edge; place the blade on the offcut side. All X / Y positions start at the full sheet’s top-left corner.`;
     const list = $('#cut-steps'); list.replaceChildren();
@@ -254,15 +260,21 @@
     const complete = data.mode === 'order' && result.count === result.total;
     $('#status').textContent = result.count === 0 ? 'No pieces fit' : complete ? 'Order fits' : 'Best plan found';
     const messages = [];
-    if (data.mode === 'capacity') messages.push(`${result.count} pieces fit on one sheet in the best plan found. Quantity includes any allowed 90° rotations.`);
-    else if (complete) messages.push(`All ${result.total} pieces fit on ${result.sheets.length} ${result.sheets.length === 1 ? 'sheet' : 'sheets'}. ${data.sheet.quantity - result.sheets.length ? `${data.sheet.quantity - result.sheets.length} available sheets remain unused.` : ''}`);
-    else messages.push(`${result.total - result.count} pieces remain unplanned. ${result.impossible.length ? 'Some sizes exceed the usable sheet.' : 'Add available sheets or adjust your piece sizes, blade width or rotation setting.'}`);
+    if (data.mode === 'capacity') messages.push(`${countLabel(result.count, 'piece')} fit on one sheet in the best plan found. Quantity includes any allowed 90° rotations.`);
+    else if (complete) messages.push(`All ${countLabel(result.total, 'piece')} fit on ${result.sheets.length} ${result.sheets.length === 1 ? 'sheet' : 'sheets'}. ${data.sheet.quantity - result.sheets.length ? `${data.sheet.quantity - result.sheets.length} available sheets remain unused.` : ''}`);
+    else messages.push(`${countLabel(result.total - result.count, 'piece')} ${result.total - result.count === 1 ? 'remains' : 'remain'} unplanned. ${result.impossible.length ? 'Some sizes exceed the usable sheet.' : 'Add available sheets or adjust your piece sizes, blade width or rotation setting.'}`);
+    if (data.mode === 'order' && !complete && result.count) {
+      const other = result.alternative;
+      if (result.objective === 'material' && other.count > result.count) messages.push(`Material priority uses ${area(result.area - other.area)} more metal in finished pieces than the best piece-count plan found, which fits ${countLabel(other.count, 'piece')} on ${countLabel(other.sheets, 'sheet')}. Choose “Fit the most pieces” if quantity matters more.`);
+      else if (result.objective === 'pieces' && other.area > result.area + 1e-7) messages.push(`A material-priority plan uses ${area(other.area - result.area)} more metal in finished pieces and fits ${countLabel(other.count, 'piece')} on ${countLabel(other.sheets, 'sheet')}. Choose “Use the most metal” to use it.`);
+    }
+    if (complete && result.sheets.length && result.area < result.sheets.length * data.sheet.width * data.sheet.height - 1e-7) messages.push('Your requested quantity is complete. The remaining rectangles can be saved as offcuts. Increase quantities or use “How many fit?” to cut more pieces.');
     if (result.impossible.length) messages.push(`${result.impossible.map(id => `P${id + 1}`).join(', ')} cannot fit on an empty sheet with these trim and rotation settings.`);
     $('#plan-message').textContent = messages.join(' ');
     $('#plan-message').className = `plan-message${result.impossible.length || (!complete && data.mode === 'order') ? ' warning' : ''}`;
     $('#plan-message').hidden = false;
     const hasSheets = result.sheets.length > 0;
-    for (const id of ['#plan-tools', '#material-details', '#cut-instructions']) $(id).hidden = !hasSheets;
+    for (const id of ['#plan-tools', '#material-details', '#cut-instructions', '#cut-recommendation']) $(id).hidden = !hasSheets;
     $$('#export-svg, #export-csv, #print-plan').forEach(b => b.disabled = false);
     $('#sheet-picker').replaceChildren(...result.sheets.map((_, i) => { const o = node('option', `Sheet ${i + 1} of ${result.sheets.length}`); o.value = i; return o; }));
     const table = node('table', undefined, 'cut-table');
@@ -359,6 +371,7 @@
     $('#print-job-title').textContent = lastPlan.data.name || 'Cutwise cutting plan';
     lastPlan.result.sheets.forEach((s, i) => {
       const section = node('section', undefined, 'print-sheet');
+      section.append(node('p', `Priority: ${lastPlan.result.objective === 'material' ? 'Use the most metal' : 'Fit the most pieces'} · ${lastPlan.result.strategiesCompared} layouts compared`, 'footnote'));
       section.append(node('h3', `${lastPlan.data.name || 'Cutwise'} · Sheet ${i + 1} of ${lastPlan.result.sheets.length}`));
       section.append(buildSvg(s, lastPlan.data));
       section.append(node('p', `${preparation(lastPlan.data)} Blade width ${fmt(lastPlan.data.kerf)} mm. Offsets are finished edges; blade goes on the offcut side. Coordinates are from the full sheet’s top left.`, 'footnote'));

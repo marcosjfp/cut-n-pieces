@@ -193,6 +193,8 @@
       #mode-hint { margin-bottom: 18px; }
       .parts-units select { width: 60px; }
       .parts-title { gap: 6px; }
+      .objective-control { margin: 16px 0 22px; }
+      .cut-recommendation { padding: 12px 14px; margin: 14px 0; border-left: 3px solid var(--green); background: var(--mint); font-size: 12px; line-height: 1.7; }
       .parts-head, .part-row { grid-template-columns: 25px minmax(0, 1fr) minmax(0, 1fr) 52px 28px; gap: 6px; }
       .part-id { font-size: 11px; font-weight: 750; }
       .part-row input { padding: 0 6px; min-width: 0; height: 44px; font-size: 14px; }
@@ -237,7 +239,7 @@
         :root { color-scheme: light; --ink: #111; --muted: #444; --subtle: #555; --line: #ccc; --paper: #fff; --canvas: #fff; }
         body { min-width: 0; background: white; color: #111; }
         .shell { padding: 0; max-width: none; }
-        header, .intro, .form-panel, .job-bar, .job-actions, .plan-tools, #status, #plan-message, .results > .visual-head, .results > .drawing-frame, .results > .legend, #material-details, #cut-instructions { display: none !important; }
+        header, .intro, .form-panel, .job-bar, .job-actions, .plan-tools, #status, #plan-message, .results > .visual-head, .results > .drawing-frame, .results > .legend, #material-details, #cut-recommendation, #cut-instructions { display: none !important; }
         .workspace { display: block; }
         .panel { border: 0; padding: 0; }
         .job-bar { margin: 0 0 12px; }
@@ -295,6 +297,7 @@
           <div class="divider"></div>
           <fieldset class="mode-switch"><legend class="field-label">What do you need?</legend><label><input type="radio" name="mode" value="order" checked> Cut an order</label><label><input type="radio" name="mode" value="capacity"> How many fit?</label></fieldset>
           <p id="mode-hint" class="hint">Enter the sizes and quantities you need.</p>
+          <div id="objective-control" class="objective-control"><label class="field-label" for="objective">Optimization priority</label><select id="objective"><option value="material">Use the most metal</option><option value="pieces">Fit the most pieces</option></select><p class="hint">If the whole order cannot fit, using more metal can mean cutting fewer, larger pieces. Your requested sizes and quantities stay fixed.</p></div>
           <div class="section-title parts-title"><h2>Pieces to cut</h2><div class="parts-units"><span class="step">02 / PARTS</span><span>Input:</span><select id="part-unit" aria-label="Piece dimension units"><option value="mm">mm</option><option value="m">m</option></select></div></div>
           <div class="parts-head" aria-hidden="true"><span>ID</span><span>Width</span><span>Height</span><span>Qty</span><span></span></div>
           <div id="part-list" class="part-list"></div>
@@ -334,6 +337,7 @@
             <svg id="layout" role="img" aria-label="Optimized sheet cutting layout" hidden></svg>
           </div>
           <div class="legend"><span><i></i>Part to cut</span><span><i class="waste"></i>Reusable offcut</span><span><i class="kerf"></i>Blade loss</span></div>
+          <p id="cut-recommendation" class="cut-recommendation" hidden></p>
           <div id="material-details" class="material-details" hidden></div>
           <div class="cut-list">
             <div class="cut-list-head"><h3>Cut list summary</h3><span>All dimensions in mm</span></div>
@@ -344,7 +348,7 @@
             <p class="hint" id="cut-help"></p><ol id="cut-steps" class="cut-steps"></ol>
             <details class="offcut-details"><summary>Reusable offcuts on this sheet</summary><div id="offcut-list"></div></details>
           </div>
-          <p class="footnote">Rectangular pieces only. Compares 12 straight-cut strategies; the best plan found is an estimate, not a guarantee of the mathematical optimum. Dimensions are finished sizes in mm. Verify blade width, tolerances and machine constraints before cutting.</p>
+          <p class="footnote">Rectangular pieces only. Compares cut directions, size orderings and allowed rotations; the best plan found is an estimate, not a guarantee of the mathematical optimum. Dimensions are finished sizes in mm. Verify blade width, tolerances and machine constraints before cutting.</p>
         </section>
       </div>
       <div id="print-sheets"></div>

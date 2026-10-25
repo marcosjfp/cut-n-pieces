@@ -91,3 +91,31 @@ test('100 deterministic mixed-size jobs have no overlap, conserve area and repla
     verify(optimize(d), d);
   }
 });
+
+test('material priority favors more finished metal, while quantity priority favors more pieces', () => {
+  const d = job({ sheet: { width: 1000, height: 1000, quantity: 1 }, parts: [
+    { id: 0, width: 900, height: 1000, quantity: 1 },
+    { id: 1, width: 300, height: 300, quantity: 9 }
+  ], kerf: 0, rotateParts: false });
+  const material = optimize(d), pieces = optimize({ ...d, objective: 'pieces' });
+  assert.equal(material.count, 1); assert.equal(material.area, 900000);
+  assert.equal(pieces.count, 9); assert.equal(pieces.area, 810000);
+  assert.deepEqual(material.alternative, { objective: 'pieces', count: 9, area: 810000, sheets: 1 });
+  assert.equal(pieces.alternative.area, material.area);
+  assert.equal(material.objective, 'material');
+  verify(material, d); verify(pieces, d);
+});
+test('expanded rotation search fits six pieces where the old search found five', () => {
+  const d = job({ sheet: { width: 500, height: 550, quantity: 1 }, parts: [{ id: 0, width: 150, height: 250, quantity: 1 }], kerf: 10, mode: 'capacity' });
+  const r = optimize(d); assert.equal(r.count, 6); assert.equal(r.strategiesCompared, 54); verify(r, d);
+});
+test('both priorities complete the order when enough sheets are available', () => {
+  const d = job({ sheet: { width: 1000, height: 1000, quantity: 2 }, parts: [{ id: 0, width: 900, height: 1000, quantity: 1 }, { id: 1, width: 300, height: 300, quantity: 9 }], kerf: 0, rotateParts: false });
+  for (const objective of ['material', 'pieces']) {
+    const r = optimize({ ...d, objective }); assert.equal(r.count, 10); assert.equal(r.sheets.length, 2); assert.equal(r.strategiesCompared, 18); verify(r, d);
+  }
+});
+test('rejects unsupported objectives and does not mutate job inputs', () => {
+  assert.throws(() => optimize(job({ objective: 'unknown' })), /priority/);
+  const d = job(), before = JSON.stringify(d); optimize(d); assert.equal(JSON.stringify(d), before);
+});

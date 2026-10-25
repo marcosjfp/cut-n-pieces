@@ -9,6 +9,7 @@
     if (!Number.isInteger(data.sheet.quantity) || data.sheet.quantity < 1 || data.sheet.quantity > 100) throw new Error('Available sheets must be a whole number from 1 to 100.');
     if (!Number.isFinite(data.kerf) || data.kerf < 0 || data.kerf > 1e7) throw new Error('Blade width must be zero or greater.');
     if (!Number.isFinite(data.trim) || data.trim < 0 || 2 * data.trim >= Math.min(data.sheet.width, data.sheet.height)) throw new Error('Edge trim must leave a usable area inside the sheet.');
+    if (data.objective !== undefined && !['material', 'pieces'].includes(data.objective)) throw new Error('Choose a valid optimization priority.');
     if (!['order', 'capacity'].includes(data.mode)) throw new Error('Choose a valid planning mode.');
     if (!Array.isArray(data.parts) || !data.parts.length || data.parts.length > 50) throw new Error('Add between 1 and 50 piece sizes.');
     if (new Set(data.parts.map(p => p.id)).size !== data.parts.length) throw new Error('Each piece size needs a unique ID.');
@@ -56,9 +57,11 @@
     area: (a, b) => b.width * b.height - a.width * a.height || b.width - a.width,
     side: (a, b) => Math.max(b.width, b.height) - Math.max(a.width, a.height) || b.width * b.height - a.width * a.height,
     width: (a, b) => b.width - a.width || b.height - a.height,
-    height: (a, b) => b.height - a.height || b.width - a.width
+    height: (a, b) => b.height - a.height || b.width - a.width,
+    small: (a, b) => a.width * a.height - b.width * b.height || a.width - b.width,
+    input: () => 0
   };
-  function packSheet(data, remaining, order, split) {
+  function packSheet(data, remaining, order, split, rotationPreference) {
     const w = data.sheet.width - 2 * data.trim, h = data.sheet.height - 2 * data.trim;
     const free = [{ x: data.trim, y: data.trim, width: w, height: h }], placements = [], cuts = [];
     const parts = data.parts.slice().sort(sorters[order]);
@@ -72,7 +75,8 @@
             if (width > r.width + EPS || height > r.height + EPS) continue;
             const dx = Math.max(0, r.width - width), dy = Math.max(0, r.height - height);
             const verticalFirst = split === 'vertical' || (split === 'adaptive' && dx * r.height >= dy * r.width);
-            const score = [Math.min(dx, dy), Math.max(dx, dy), r.y, r.x];
+            const preference = rotationPreference === 'original' ? Number(rotated) : rotationPreference === 'rotated' ? Number(!rotated) : 0;
+            const score = [preference, Math.min(dx, dy), Math.max(dx, dy), r.y, r.x];
             if (!best || score.some((v, j) => v < best.score[j] - EPS && score.slice(0, j).every((n, k) => Math.abs(n - best.score[k]) <= EPS))) {
               best = { i, r, width, height, rotated, verticalFirst, score };
             }
@@ -88,31 +92,53 @@
     }
     return { placements, cuts, remnants: free, usedArea: placements.reduce((s, p) => s + p.width * p.height, 0), kerfArea: cuts.reduce((s, c) => s + c.length * c.kerf, 0) };
   }
+  // Lexicographic objectives keep the material and quantity tradeoff explicit.
+  function better(a, b, objective) {
+    if (!b) return true;
+    const scores = p => objective === 'pieces'
+      ? [p.count, -p.sheets.length, p.area, -p.kerfArea, p.largestOffcut, -p.cutCount, -p.cutLength]
+      : [p.area, -p.sheets.length, p.count, -p.kerfArea, p.largestOffcut, -p.cutCount, -p.cutLength];
+    const left = scores(a), right = scores(b);
+    for (let i = 0; i < left.length; i++) {
+      if (Math.abs(left[i] - right[i]) > EPS) return left[i] > right[i];
+    }
+    return false;
+  }
   function optimize(input) {
-    const data = validate(input);
+    const data = validate(input), objective = data.objective || 'material';
     const width = data.sheet.width - 2 * data.trim, height = data.sheet.height - 2 * data.trim;
     const impossible = data.parts.filter(p => !fits(p, width, height, data.rotateParts)).map(p => p.id);
-    let best;
+    let materialBest, piecesBest, strategiesCompared = 0;
     for (const order of Object.keys(sorters)) {
       for (const split of ['vertical', 'horizontal', 'adaptive']) {
-        const remaining = new Map(data.parts.map(p => [p.id, data.mode === 'capacity' ? LIMIT : p.quantity]));
-        const sheets = [];
-        const sheetCount = data.mode === 'capacity' ? 1 : data.sheet.quantity;
-        for (let i = 0; i < sheetCount; i++) {
-          if (![...remaining.values()].some(n => n > 0)) break;
-          const sheet = packSheet(data, remaining, order, split);
-          if (!sheet.placements.length) break;
-          sheets.push(sheet);
+        for (const rotation of data.rotateParts ? ['best', 'original', 'rotated'] : ['best']) {
+          strategiesCompared++;
+          const remaining = new Map(data.parts.map(p => [p.id, data.mode === 'capacity' ? LIMIT : p.quantity]));
+          const sheets = [];
+          const sheetCount = data.mode === 'capacity' ? 1 : data.sheet.quantity;
+          for (let i = 0; i < sheetCount; i++) {
+            if (![...remaining.values()].some(n => n > 0)) break;
+            const sheet = packSheet(data, remaining, order, split, rotation);
+            if (!sheet.placements.length) break;
+            sheets.push(sheet);
+          }
+          const count = sheets.reduce((s, v) => s + v.placements.length, 0);
+          const area = sheets.reduce((s, v) => s + v.usedArea, 0);
+          const kerfArea = sheets.reduce((s, v) => s + v.kerfArea, 0);
+          const largestOffcut = sheets.reduce((largest, sheet) => sheet.remnants.reduce((value, r) => Math.max(value, r.width * r.height), largest), 0);
+          const cutCount = sheets.reduce((s, v) => s + v.cuts.length, 0);
+          const cutLength = sheets.reduce((sum, sheet) => sum + sheet.cuts.reduce((length, cut) => length + cut.length, 0), 0);
+          const candidate = { sheets, count, area, kerfArea, largestOffcut, cutCount, cutLength, remaining: Object.fromEntries(remaining), impossible };
+          if (better(candidate, materialBest, 'material')) materialBest = candidate;
+          if (better(candidate, piecesBest, 'pieces')) piecesBest = candidate;
         }
-        const count = sheets.reduce((s, v) => s + v.placements.length, 0);
-        const area = sheets.reduce((s, v) => s + v.usedArea, 0);
-        const cutCount = sheets.reduce((s, v) => s + v.cuts.length, 0);
-        const cutLength = sheets.reduce((sum, sheet) => sum + sheet.cuts.reduce((length, cut) => length + cut.length, 0), 0);
-        const candidate = { sheets, count, area, cutCount, cutLength, remaining: Object.fromEntries(remaining), impossible };
-        if (!best || count > best.count || (count === best.count && (sheets.length < best.sheets.length ||
-          (sheets.length === best.sheets.length && (area > best.area + EPS || (Math.abs(area - best.area) < EPS && (cutCount < best.cutCount || (cutCount === best.cutCount && cutLength < best.cutLength)))))))) best = candidate;
       }
     }
+    const best = objective === 'pieces' ? piecesBest : materialBest;
+    const alternative = objective === 'pieces' ? materialBest : piecesBest;
+    best.objective = objective;
+    best.strategiesCompared = strategiesCompared;
+    best.alternative = { objective: objective === 'pieces' ? 'material' : 'pieces', count: alternative.count, area: alternative.area, sheets: alternative.sheets.length };
     best.total = data.mode === 'capacity' ? best.count : data.parts.reduce((s, p) => s + p.quantity, 0);
     return best;
   }
