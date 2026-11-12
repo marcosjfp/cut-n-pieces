@@ -51,6 +51,19 @@
     $('#objective-control').hidden = capacity;
     $('#mode-hint').textContent = capacity ? 'Use one piece size. Find the best quantity on one sheet; the quantity field is ignored.' : 'Enter the sizes and quantities you need.';
   }
+  const machineHints = {
+    generic: 'No machine limits. Enter your blade width below.',
+    'durma-sbt-3006': 'Hydraulic guillotine shear: no kerf, back gauge 5–950 mm, cuts up to 3050 mm long. Every cut is planned so one side can be set on the back gauge; strips are sheared first when needed.'
+  };
+  const machineName = () => (lastPlan && lastPlan.result.machine) ? lastPlan.result.machine.name : 'Generic';
+  function updateMachine() {
+    const machine = $('[name="machine"]:checked').value, kerf = $('#kerf'), shear = machine !== 'generic';
+    if (shear && !kerf.disabled) { kerf.dataset.previous = kerf.value; kerf.value = '0'; }
+    if (!shear && kerf.disabled) kerf.value = kerf.dataset.previous ?? kerf.value;
+    kerf.disabled = shear;
+    kerf.title = shear ? 'A shear removes no material' : '';
+    $('#machine-hint').textContent = machineHints[machine];
+  }
   function addPart(width = '', height = '', quantity = 1, focus = false) {
     if (partList.children.length >= 50) return;
     const row = node('div', undefined, 'part-row');
@@ -74,7 +87,8 @@
       widthUnit: $('[aria-label="Sheet width units"]').value, heightUnit: $('[aria-label="Sheet height units"]').value,
       partUnit: $('#part-unit').value, sheets: $('#sheet-quantity').value,
       kerf: $('#kerf').value, trim: $('#trim').value, rotate: $('#allow-rotation').checked,
-      mode: $('[name="mode"]:checked').value, objective: $('#objective').value,
+      mode: $('[name="mode"]:checked').value, objective: $('#objective').value, machine: $('[name="machine"]:checked').value,
+      kerfBeforeMachine: $('#kerf').dataset.previous,
       parts: $$('.part-row').map(row => ({ width: $('.part-width', row).value, height: $('.part-height', row).value, quantity: $('.qty-input', row).value }))
     };
   }
@@ -85,6 +99,8 @@
       if (!['string', 'number'].includes(typeof value) || String(value).length > 30 || (value !== '' && !Number.isFinite(Number(value)))) throw new Error('The job file contains invalid dimensions or quantities.');
     }
     if (job.objective !== undefined && !['material', 'pieces'].includes(job.objective)) throw new Error('The job file contains an invalid optimization priority.');
+    if (job.machine !== undefined && !Object.hasOwn(Cutwise.MACHINES, job.machine)) throw new Error('The job file contains an unknown cutting machine.');
+    if (job.kerfBeforeMachine !== undefined && (typeof job.kerfBeforeMachine !== 'string' || job.kerfBeforeMachine.length > 30)) throw new Error('The job file contains an invalid blade width.');
     if (job.name !== undefined && typeof job.name !== 'string') throw new Error('The job reference must be text.');
     return job;
   }
@@ -98,6 +114,10 @@
     $('#allow-rotation').checked = job.rotate;
     $('#objective').value = job.objective || 'material';
     $(`[name="mode"][value="${job.mode}"]`).checked = true;
+    $(`[name="machine"][value="${job.machine || 'generic'}"]`).checked = true;
+    $('#kerf').disabled = (job.machine || 'generic') !== 'generic';
+    if (job.kerfBeforeMachine !== undefined) $('#kerf').dataset.previous = job.kerfBeforeMachine;
+    updateMachine();
     partList.replaceChildren();
     job.parts.forEach(p => addPart(p.width, p.height, p.quantity));
     $$('.unit-select, #part-unit').forEach(s => s.dataset.previous = s.value);
@@ -125,7 +145,7 @@
       sheet: { width: mm(job.width, job.widthUnit), height: mm(job.height, job.heightUnit), quantity: job.mode === 'capacity' ? 1 : Number(job.sheets) },
       parts: job.parts.map((p, i) => ({ id: i, width: mm(p.width, job.partUnit), height: mm(p.height, job.partUnit), quantity: job.mode === 'capacity' ? 1 : Number(p.quantity) })),
       kerf: job.kerf === '' ? NaN : Number(job.kerf), trim: job.trim === '' ? NaN : Number(job.trim),
-      rotateParts: job.rotate, mode: job.mode, objective: job.objective, name: job.name
+      rotateParts: job.rotate, mode: job.mode, objective: job.objective, machine: job.machine, name: job.name
     };
     return Cutwise.validate(data);
   }
@@ -201,8 +221,13 @@
     $('#layout').replaceWith(svg);
     $('#empty-state').hidden = true;
   }
+  function gaugeText(c) {
+    if (!c.gauge) return '';
+    const side = c.gauge.side === 'near' ? (c.axis === 'x' ? 'left' : 'top') : (c.axis === 'x' ? 'right' : 'bottom');
+    return ` · back gauge ${fmt(c.gauge.distance)} mm (${side} part behind the blade)${c.preparatory ? ' · strip cut to bring the next cut within gauge range' : ''}`;
+  }
   function cutText(c, index) {
-    return `Cut ${index + 1}: ${c.axis === 'x' ? 'Vertical' : 'Horizontal'} · ${fmt(c.offset)} mm from the ${c.axis === 'x' ? 'left' : 'top'} edge of this rectangle`;
+    return `Cut ${index + 1}: ${c.axis === 'x' ? 'Vertical' : 'Horizontal'} · ${fmt(c.offset)} mm from the ${c.axis === 'x' ? 'left' : 'top'} edge of this rectangle${gaugeText(c)}`;
   }
   function cutDetail(c) {
     return `Rectangle ${fmt(c.rect.width)} × ${fmt(c.rect.height)} mm at X ${fmt(c.rect.x)}, Y ${fmt(c.rect.y)} · cut length ${fmt(c.length)} mm`;
@@ -216,7 +241,7 @@
     $('#sheet-picker').value = sheetIndex;
     $('#prev-sheet').disabled = sheetIndex === 0;
     $('#next-sheet').disabled = sheetIndex === result.sheets.length - 1;
-    $('#sheet-label').textContent = `${fmt(data.sheet.width)} × ${fmt(data.sheet.height)} mm · ${sheet.placements.length} pieces · ${fmt(data.kerf)} mm kerf`;
+    $('#sheet-label').textContent = `${fmt(data.sheet.width)} × ${fmt(data.sheet.height)} mm · ${sheet.placements.length} pieces · ${result.machine && result.machine.shear ? result.machine.name : `${fmt(data.kerf)} mm kerf`}`;
     const remainingArea = sheet.remnants.reduce((s, r) => s + r.width * r.height, 0);
     const trimArea = data.sheet.width * data.sheet.height - (data.sheet.width - 2 * data.trim) * (data.sheet.height - 2 * data.trim);
     $('#material-details').replaceChildren(...[
@@ -224,7 +249,7 @@
       `Offcuts: ${area(remainingArea)}`, `Blade loss: ${area(sheet.kerfArea)}`, ...(data.trim ? [`Reserved edge: ${area(trimArea)}`] : [])
     ].map(t => node('span', t)));
     const firstCut = sheet.cuts[0];
-    $('#cut-recommendation').textContent = firstCut ? `Suggested start: ${firstCut.axis === 'x' ? 'vertical' : 'horizontal'} cut, ${fmt(firstCut.offset)} mm from the usable rectangle’s ${firstCut.axis === 'x' ? 'left' : 'top'} edge. ${data.trim ? 'Prepare the trimmed rectangle first. ' : ''}Compared ${result.strategiesCompared} layouts across the available sheets. Follow the numbered sequence below.` : 'No separation cuts are needed: the piece matches the usable sheet.';
+    $('#cut-recommendation').textContent = firstCut ? `Suggested start: ${firstCut.axis === 'x' ? 'vertical' : 'horizontal'} cut, ${fmt(firstCut.offset)} mm from the usable rectangle’s ${firstCut.axis === 'x' ? 'left' : 'top'} edge${gaugeText(firstCut)}. ${data.trim ? 'Prepare the trimmed rectangle first. ' : ''}Compared ${result.strategiesCompared} layouts across the available sheets. Follow the numbered sequence below.` : 'No separation cuts are needed: the piece matches the usable sheet.';
     $('#cut-count').textContent = `(${sheet.cuts.length})`;
     $('#cut-help').textContent = `${preparation(data)} Select a step to highlight it. Offsets mark the finished edge; place the blade on the offcut side. All X / Y positions start at the full sheet’s top-left corner.`;
     const list = $('#cut-steps'); list.replaceChildren();
@@ -269,7 +294,9 @@
       else if (result.objective === 'pieces' && other.area > result.area + 1e-7) messages.push(`A material-priority plan uses ${area(other.area - result.area)} more metal in finished pieces and fits ${countLabel(other.count, 'piece')} on ${countLabel(other.sheets, 'sheet')}. Choose “Use the most metal” to use it.`);
     }
     if (complete && result.sheets.length && result.area < result.sheets.length * data.sheet.width * data.sheet.height - 1e-7) messages.push('Your requested quantity is complete. The remaining rectangles can be saved as offcuts. Increase quantities or use “How many fit?” to cut more pieces.');
-    if (result.impossible.length) messages.push(`${result.impossible.map(id => `P${id + 1}`).join(', ')} cannot fit on an empty sheet with these trim and rotation settings.`);
+    if (result.impossible.length) messages.push(result.machine && result.machine.shear
+      ? `${result.impossible.map(id => `P${id + 1}`).join(', ')} cannot be cut from an empty sheet on the ${result.machine.name} (back gauge ${result.machine.minGauge}–${result.machine.maxGauge} mm, cuts up to ${result.machine.maxCutLength} mm long) with these trim and rotation settings.`
+      : `${result.impossible.map(id => `P${id + 1}`).join(', ')} cannot fit on an empty sheet with these trim and rotation settings.`);
     $('#plan-message').textContent = messages.join(' ');
     $('#plan-message').className = `plan-message${result.impossible.length || (!complete && data.mode === 'order') ? ' warning' : ''}`;
     $('#plan-message').hidden = false;
@@ -318,7 +345,7 @@
     finally { busy = false; $('#optimize').disabled = false; $('#optimize').textContent = 'Calculate cutting plan'; }
   });
   $('#add-part').addEventListener('click', () => { addPart('', '', 1, true); changed(); });
-  $('#planner-form').addEventListener('input', e => { if (e.target.matches('[name="mode"]')) updateRows(); changed(); });
+  $('#planner-form').addEventListener('input', e => { if (e.target.matches('[name="mode"]')) updateRows(); if (e.target.matches('[name="machine"]')) updateMachine(); changed(); });
   $('#job-name').addEventListener('input', changed);
   $$('.unit-select, #part-unit').forEach(select => {
     select.dataset.previous = select.value;
@@ -355,11 +382,12 @@
   });
   $('#export-csv').addEventListener('click', () => {
     if (!lastPlan || stale) return;
-    const rows = [['Type', 'Sheet', 'ID / step', 'Width mm', 'Height mm', 'X mm', 'Y mm', 'Rotated', 'Direction', 'Offset mm', 'Cut length mm', 'Kerf mm']];
+    const rows = [['Type', 'Sheet', 'ID / step', 'Width mm', 'Height mm', 'X mm', 'Y mm', 'Rotated', 'Direction', 'Offset mm', 'Cut length mm', 'Kerf mm', 'Back gauge mm', 'Gauge side']];
     lastPlan.result.sheets.forEach((s, i) => {
-      s.placements.forEach(p => rows.push(['Piece', i + 1, `P${p.partId + 1}`, fmt(p.width), fmt(p.height), fmt(p.x), fmt(p.y), p.rotated ? 'Yes' : 'No', '', '', '', '']));
-      s.cuts.forEach((c, j) => rows.push(['Cut', i + 1, j + 1, fmt(c.rect.width), fmt(c.rect.height), fmt(c.rect.x), fmt(c.rect.y), '', c.axis === 'x' ? 'Vertical' : 'Horizontal', fmt(c.offset), fmt(c.length), fmt(c.kerf)]));
-      s.remnants.forEach((r, j) => rows.push(['Offcut', i + 1, j + 1, fmt(r.width), fmt(r.height), fmt(r.x), fmt(r.y), '', '', '', '', '']));
+      s.placements.forEach(p => rows.push(['Piece', i + 1, `P${p.partId + 1}`, fmt(p.width), fmt(p.height), fmt(p.x), fmt(p.y), p.rotated ? 'Yes' : 'No', '', '', '', '', '', '']));
+      s.cuts.forEach((c, j) => rows.push(['Cut', i + 1, j + 1, fmt(c.rect.width), fmt(c.rect.height), fmt(c.rect.x), fmt(c.rect.y), '', c.axis === 'x' ? 'Vertical' : 'Horizontal', fmt(c.offset), fmt(c.length), fmt(c.kerf),
+        c.gauge ? fmt(c.gauge.distance) : '', c.gauge ? (c.gauge.side === 'near' ? (c.axis === 'x' ? 'Left' : 'Top') : (c.axis === 'x' ? 'Right' : 'Bottom')) : '']));
+      s.remnants.forEach((r, j) => rows.push(['Offcut', i + 1, j + 1, fmt(r.width), fmt(r.height), fmt(r.x), fmt(r.y), '', '', '', '', '', '', '']));
     });
     download(`${filename()}-cut-list.csv`, rows.map(r => r.map(v => `"${String(v).replaceAll('"', '""')}"`).join(',')).join('\r\n'), 'text/csv;charset=utf-8');
   });
@@ -371,7 +399,7 @@
     $('#print-job-title').textContent = lastPlan.data.name || 'Cutwise cutting plan';
     lastPlan.result.sheets.forEach((s, i) => {
       const section = node('section', undefined, 'print-sheet');
-      section.append(node('p', `Priority: ${lastPlan.result.objective === 'material' ? 'Use the most metal' : 'Fit the most pieces'} · ${lastPlan.result.strategiesCompared} layouts compared`, 'footnote'));
+      section.append(node('p', `Machine: ${machineName()} · Priority: ${lastPlan.result.objective === 'material' ? 'Use the most metal' : 'Fit the most pieces'} · ${lastPlan.result.strategiesCompared} layouts compared`, 'footnote'));
       section.append(node('h3', `${lastPlan.data.name || 'Cutwise'} · Sheet ${i + 1} of ${lastPlan.result.sheets.length}`));
       section.append(buildSvg(s, lastPlan.data));
       section.append(node('p', `${preparation(lastPlan.data)} Blade width ${fmt(lastPlan.data.kerf)} mm. Offsets are finished edges; blade goes on the offcut side. Coordinates are from the full sheet’s top left.`, 'footnote'));

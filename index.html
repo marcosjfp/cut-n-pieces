@@ -190,7 +190,7 @@
       .mode-switch label { display: flex; gap: 7px; flex: 1; align-items: center; border: 1px solid var(--line); border-radius: 8px; padding: 10px 8px; font-size: 12px; cursor: pointer; }
       .mode-switch label:has(:checked) { background: var(--mint); border-color: var(--green); }
       .mode-switch input { accent-color: var(--green); margin: 0; }
-      #mode-hint { margin-bottom: 18px; }
+      #mode-hint, #machine-hint { margin-bottom: 18px; }
       .parts-units select { width: 60px; }
       .parts-title { gap: 6px; }
       .objective-control { margin: 16px 0 22px; }
@@ -304,6 +304,8 @@
           <button id="add-part" class="add-btn" type="button">＋ Add another size</button>
 
           <div class="divider"></div>
+          <fieldset class="mode-switch machine-switch"><legend class="field-label">Cutting machine</legend><label><input type="radio" name="machine" value="generic" checked> Generic</label><label><input type="radio" name="machine" value="durma-sbt-3006"> Durma SBT 3006 shear</label></fieldset>
+          <p id="machine-hint" class="hint">No machine limits. Enter your blade width below.</p>
           <div class="options">
             <div><label class="field-label" for="kerf">Blade width / kerf <small>mm</small></label><input id="kerf" type="number" min="0" step="any" value="3"><p class="hint">Material removed by the blade. Use 0 for shearing.</p></div>
             <div><label class="field-label" for="trim">Edge trim <small>mm per side</small></label><input id="trim" type="number" min="0" step="any" value="0"><p class="hint">Reserve an edge on all four sides.</p></div>

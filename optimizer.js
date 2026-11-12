@@ -3,6 +3,16 @@
   'use strict';
   const EPS = 1e-7;
   const LIMIT = 2000;
+  // Machine profiles. "generic" applies no machine limits. A shear profile forces zero kerf and
+  // requires every cut to be set on the back gauge from one side of the cut line.
+  const MACHINES = {
+    generic: { id: 'generic', name: 'Generic' },
+    'durma-sbt-3006': {
+      id: 'durma-sbt-3006', name: 'Durma SBT 3006 hydraulic guillotine shear', shear: true,
+      kerf: 0, minGauge: 5, maxGauge: 950, maxCutLength: 3050
+    }
+  };
+  function machineFor(data) { return MACHINES[data.machine || 'generic']; }
   function validate(data) {
     const positive = v => Number.isFinite(v) && v > 0 && v <= 1e7;
     if (!data || !data.sheet || !positive(data.sheet.width) || !positive(data.sheet.height)) throw new Error('Enter sheet dimensions greater than zero (up to 10,000,000 mm).');
@@ -10,6 +20,9 @@
     if (!Number.isFinite(data.kerf) || data.kerf < 0 || data.kerf > 1e7) throw new Error('Blade width must be zero or greater.');
     if (!Number.isFinite(data.trim) || data.trim < 0 || 2 * data.trim >= Math.min(data.sheet.width, data.sheet.height)) throw new Error('Edge trim must leave a usable area inside the sheet.');
     if (data.objective !== undefined && !['material', 'pieces'].includes(data.objective)) throw new Error('Choose a valid optimization priority.');
+    if (data.machine !== undefined && !MACHINES[data.machine]) throw new Error('Choose a valid cutting machine.');
+    const machine = machineFor(data);
+    if (machine.shear) data = { ...data, kerf: machine.kerf };
     if (!['order', 'capacity'].includes(data.mode)) throw new Error('Choose a valid planning mode.');
     if (!Array.isArray(data.parts) || !data.parts.length || data.parts.length > 50) throw new Error('Add between 1 and 50 piece sizes.');
     if (new Set(data.parts.map(p => p.id)).size !== data.parts.length) throw new Error('Each piece size needs a unique ID.');
@@ -31,18 +44,48 @@
   }
   // Each split spans its current rectangle. Its offcuts are disjoint and remain usable.
   // Kerf lies outside the finished part, clipped at the outer edge of that rectangle.
-  function partition(rect, width, height, kerf, verticalFirst) {
+  // With a machine profile, returns null when the piece cannot be separated within its limits.
+  function gaugeFor(near, far, machine) {
+    const ok = v => v >= machine.minGauge - EPS && v <= machine.maxGauge + EPS;
+    if (ok(near)) return { side: 'near', distance: near };
+    if (far > EPS && ok(far)) return { side: 'far', distance: far };
+    return null;
+  }
+  function partition(rect, width, height, kerf, verticalFirst, machine) {
     const remnants = [], cuts = [];
+    const limited = machine && machine.shear;
     let current = { ...rect };
     for (const axis of verticalFirst ? ['x', 'y'] : ['y', 'x']) {
       const size = axis === 'x' ? width : height;
       const dimension = axis === 'x' ? 'width' : 'height';
       const other = axis === 'x' ? 'height' : 'width';
-      const extra = current[dimension] - size;
+      let extra = current[dimension] - size;
+      let gauge;
+      if (limited && extra > EPS) {
+        if (current[other] > machine.maxCutLength + EPS) return null;
+        // Both sides out of gauge range: first shear gauge-sized strips from the far side.
+        // Each strip stays a reusable offcut and brings the far side into range.
+        while (!(gauge = gaugeFor(size, extra - Math.min(kerf, extra), machine))) {
+          const far = extra - Math.min(kerf, extra);
+          if (far <= machine.maxGauge + EPS) return null;
+          const strip = Math.min(machine.maxGauge, far - kerf - machine.minGauge);
+          if (strip < machine.minGauge - EPS) return null;
+          const position = current[dimension] - strip - kerf;
+          cuts.push({ axis, x: current.x + (axis === 'x' ? position : 0), y: current.y + (axis === 'y' ? position : 0),
+            length: current[other], kerf, offset: position, rect: { ...current }, gauge: { side: 'far', distance: strip }, preparatory: true });
+          const piece = { ...current, [dimension]: strip };
+          piece[axis] += position + kerf;
+          remnants.push(piece);
+          current[dimension] = position;
+          extra = current[dimension] - size;
+        }
+      }
       if (extra > EPS) {
         const band = Math.min(kerf, extra);
-        cuts.push({ axis, x: current.x + (axis === 'x' ? size : 0), y: current.y + (axis === 'y' ? size : 0),
-          length: current[other], kerf: band, offset: size, rect: { ...current } });
+        const cut = { axis, x: current.x + (axis === 'x' ? size : 0), y: current.y + (axis === 'y' ? size : 0),
+          length: current[other], kerf: band, offset: size, rect: { ...current } };
+        if (gauge) cut.gauge = gauge;
+        cuts.push(cut);
         if (extra - band > EPS) {
           const rest = { ...current, [dimension]: extra - band };
           rest[axis] += size + band;
@@ -65,6 +108,7 @@
     const w = data.sheet.width - 2 * data.trim, h = data.sheet.height - 2 * data.trim;
     const free = [{ x: data.trim, y: data.trim, width: w, height: h }], placements = [], cuts = [];
     const parts = data.parts.slice().sort(sorters[order]);
+    const machine = machineFor(data);
     for (const p of parts) {
       while (remaining.get(p.id) > 0) {
         let best;
@@ -74,16 +118,24 @@
             const width = rotated ? p.height : p.width, height = rotated ? p.width : p.height;
             if (width > r.width + EPS || height > r.height + EPS) continue;
             const dx = Math.max(0, r.width - width), dy = Math.max(0, r.height - height);
-            const verticalFirst = split === 'vertical' || (split === 'adaptive' && dx * r.height >= dy * r.width);
+            let verticalFirst = split === 'vertical' || (split === 'adaptive' && dx * r.height >= dy * r.width);
+            let division, extraCuts = 0;
+            if (machine.shear) {
+              // The preferred split order may break a machine limit; the other order may not.
+              division = partition(r, width, height, data.kerf, verticalFirst, machine);
+              if (!division) { verticalFirst = !verticalFirst; division = partition(r, width, height, data.kerf, verticalFirst, machine); }
+              if (!division) continue;
+              extraCuts = division.cuts.filter(c => c.preparatory).length;
+            }
             const preference = rotationPreference === 'original' ? Number(rotated) : rotationPreference === 'rotated' ? Number(!rotated) : 0;
-            const score = [preference, Math.min(dx, dy), Math.max(dx, dy), r.y, r.x];
+            const score = [preference, extraCuts, Math.min(dx, dy), Math.max(dx, dy), r.y, r.x];
             if (!best || score.some((v, j) => v < best.score[j] - EPS && score.slice(0, j).every((n, k) => Math.abs(n - best.score[k]) <= EPS))) {
-              best = { i, r, width, height, rotated, verticalFirst, score };
+              best = { i, r, width, height, rotated, verticalFirst, score, division };
             }
           }
         }
         if (!best) break;
-        const division = partition(best.r, best.width, best.height, data.kerf, best.verticalFirst);
+        const division = best.division || partition(best.r, best.width, best.height, data.kerf, best.verticalFirst);
         free.splice(best.i, 1, ...division.remnants);
         placements.push({ x: best.r.x, y: best.r.y, width: best.width, height: best.height, rotated: best.rotated, partId: p.id });
         cuts.push(...division.cuts);
@@ -107,7 +159,10 @@
   function optimize(input) {
     const data = validate(input), objective = data.objective || 'material';
     const width = data.sheet.width - 2 * data.trim, height = data.sheet.height - 2 * data.trim;
-    const impossible = data.parts.filter(p => !fits(p, width, height, data.rotateParts)).map(p => p.id);
+    const machine = machineFor(data), usable = { x: data.trim, y: data.trim, width, height };
+    const cuttable = p => !machine.shear || [false, true].filter(r => !r || (data.rotateParts && p.width !== p.height)).some(r =>
+      [true, false].some(v => partition(usable, r ? p.height : p.width, r ? p.width : p.height, data.kerf, v, machine)));
+    const impossible = data.parts.filter(p => !fits(p, width, height, data.rotateParts) || !cuttable(p)).map(p => p.id);
     let materialBest, piecesBest, strategiesCompared = 0;
     for (const order of Object.keys(sorters)) {
       for (const split of ['vertical', 'horizontal', 'adaptive']) {
@@ -137,12 +192,13 @@
     const best = objective === 'pieces' ? piecesBest : materialBest;
     const alternative = objective === 'pieces' ? materialBest : piecesBest;
     best.objective = objective;
+    best.machine = { ...machine };
     best.strategiesCompared = strategiesCompared;
     best.alternative = { objective: objective === 'pieces' ? 'material' : 'pieces', count: alternative.count, area: alternative.area, sheets: alternative.sheets.length };
     best.total = data.mode === 'capacity' ? best.count : data.parts.reduce((s, p) => s + p.quantity, 0);
     return best;
   }
-  const api = { optimize, validate, partition, fits, LIMIT };
+  const api = { optimize, validate, partition, fits, LIMIT, MACHINES };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Cutwise = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

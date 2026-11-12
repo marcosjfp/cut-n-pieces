@@ -119,3 +119,56 @@ test('rejects unsupported objectives and does not mutate job inputs', () => {
   assert.throws(() => optimize(job({ objective: 'unknown' })), /priority/);
   const d = job(), before = JSON.stringify(d); optimize(d); assert.equal(JSON.stringify(d), before);
 });
+
+const durma = (overrides = {}) => job({ machine: 'durma-sbt-3006', kerf: 0, ...overrides });
+function verifyShear(result, data) {
+  verify(result, { ...data, kerf: 0 });
+  const m = result.machine;
+  assert.equal(m.id, 'durma-sbt-3006');
+  for (const s of result.sheets) for (const c of s.cuts) {
+    const dimension = c.axis === 'x' ? 'width' : 'height';
+    const far = c.rect[dimension] - c.offset - c.kerf;
+    assert.ok(c.length <= m.maxCutLength + 1e-7, `cut length ${c.length} exceeds blade`);
+    assert.ok(c.gauge, 'every shear cut has a back-gauge setting');
+    close(c.gauge.distance, c.gauge.side === 'near' ? c.offset : far);
+    assert.ok(c.gauge.distance >= m.minGauge - 1e-7 && c.gauge.distance <= m.maxGauge + 1e-7, `gauge ${c.gauge.distance} out of range`);
+  }
+}
+test('generic machine is the default and keeps kerf', () => {
+  const r = optimize(job()); assert.equal(r.machine.id, 'generic');
+  assert.throws(() => optimize(job({ machine: 'laser-9000' })), /machine/);
+});
+test('Durma SBT 3006 forces zero kerf and keeps every cut inside the 5–950 mm back gauge', () => {
+  const d = durma({ kerf: 3 }), before = JSON.stringify(d);
+  const r = optimize(d); assert.equal(r.count, 5); verifyShear(r, d);
+  assert.equal(JSON.stringify(d), before);
+  assert.ok(r.sheets.every(s => s.kerfArea === 0));
+});
+test('Durma shears gauge strips first when both sides of a cut exceed 950 mm', () => {
+  // 1000 mm wide piece on a 2500 mm sheet: 1000 / 1500 split is out of range on both sides.
+  const d = durma({ sheet: { width: 2500, height: 1000, quantity: 1 }, parts: [{ id: 0, width: 1000, height: 1000, quantity: 1 }], rotateParts: false });
+  const r = optimize(d); assert.equal(r.count, 1); verifyShear(r, d);
+  assert.ok(r.sheets[0].cuts.some(c => c.preparatory));
+  // The generic planner makes a single cut that the shear cannot gauge.
+  const generic = optimize({ ...d, machine: 'generic' });
+  assert.equal(generic.sheets[0].cuts.length, 1); assert.equal(generic.sheets[0].cuts[0].offset, 1000);
+});
+test('Durma cannot cut slivers below 5 mm on both sides', () => {
+  const d = durma({ sheet: { width: 8, height: 100, quantity: 1 }, parts: [{ id: 0, width: 4, height: 100, quantity: 2 }], rotateParts: false });
+  const r = optimize(d); assert.equal(r.count, 0); assert.deepEqual(r.impossible, [0]);
+  const generic = optimize({ ...d, machine: 'generic' }); assert.equal(generic.count, 2);
+});
+test('Durma will not plan cuts longer than its 3050 mm blade', () => {
+  const d = durma({ sheet: { width: 4000, height: 4000, quantity: 1 }, parts: [{ id: 0, width: 500, height: 500, quantity: 1 }] });
+  const r = optimize(d); assert.equal(r.count, 0); assert.deepEqual(r.impossible, [0]);
+  const long = durma({ sheet: { width: 6000, height: 1500, quantity: 1 }, parts: [{ id: 0, width: 1000, height: 500, quantity: 6 }] });
+  const lr = optimize(long); assert.ok(lr.count > 0); verifyShear(lr, long);
+});
+test('Durma plans 100 reproducible mixed jobs with gaugeable cuts only', () => {
+  let seed = 7; const rand = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  for (let n = 0; n < 100; n++) {
+    const parts = Array.from({ length: 1 + Math.floor(rand() * 5) }, (_, id) => ({ id, width: Math.round(20 + rand() * 1400), height: Math.round(20 + rand() * 1200), quantity: 1 + Math.floor(rand() * 6) }));
+    const d = durma({ sheet: { width: Math.round(1000 + rand() * 2000), height: Math.round(800 + rand() * 1500), quantity: 1 + Math.floor(rand() * 3) }, parts, rotateParts: rand() > .3, trim: rand() > .7 ? 5 : 0, objective: rand() > .5 ? 'pieces' : 'material' });
+    verifyShear(optimize(d), d);
+  }
+});
