@@ -53,7 +53,7 @@
   }
   const machineHints = {
     generic: 'No machine limits. Enter your blade width below.',
-    'durma-sbt-3006': 'Hydraulic guillotine shear: no kerf, back gauge 5–950 mm, cuts up to 3050 mm long. Every cut is planned so one side can be set on the back gauge; strips are sheared first when needed.'
+    'durma-sbt-3006': 'Hydraulic guillotine shear: no kerf, back gauge 5–950 mm, cuts up to 3000 mm long. Every cut is planned so one side can be set on the back gauge; strips are sheared first when needed.'
   };
   const machineName = () => (lastPlan && lastPlan.result.machine) ? lastPlan.result.machine.name : 'Generic';
   function updateMachine() {

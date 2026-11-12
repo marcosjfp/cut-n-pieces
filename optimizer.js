@@ -9,7 +9,7 @@
     generic: { id: 'generic', name: 'Generic' },
     'durma-sbt-3006': {
       id: 'durma-sbt-3006', name: 'Durma SBT 3006 hydraulic guillotine shear', shear: true,
-      kerf: 0, minGauge: 5, maxGauge: 950, maxCutLength: 3050
+      kerf: 0, minGauge: 5, maxGauge: 950, maxCutLength: 3000
     }
   };
   function machineFor(data) { return MACHINES[data.machine || 'generic']; }

@@ -158,9 +158,14 @@ test('Durma cannot cut slivers below 5 mm on both sides', () => {
   const r = optimize(d); assert.equal(r.count, 0); assert.deepEqual(r.impossible, [0]);
   const generic = optimize({ ...d, machine: 'generic' }); assert.equal(generic.count, 2);
 });
-test('Durma will not plan cuts longer than its 3050 mm blade', () => {
+test('Durma will not plan cuts longer than its 3000 mm blade', () => {
   const d = durma({ sheet: { width: 4000, height: 4000, quantity: 1 }, parts: [{ id: 0, width: 500, height: 500, quantity: 1 }] });
   const r = optimize(d); assert.equal(r.count, 0); assert.deepEqual(r.impossible, [0]);
+  // 3000 mm is the blade limit: a 3000 mm cut is allowed, 3001 mm is not.
+  const edge = durma({ sheet: { width: 3000, height: 3000, quantity: 1 }, parts: [{ id: 0, width: 500, height: 500, quantity: 1 }] });
+  const er = optimize(edge); assert.equal(er.count, 1); verifyShear(er, edge);
+  assert.ok(er.sheets[0].cuts.some(c => Math.abs(c.length - 3000) < 1e-7));
+  assert.equal(optimize(durma({ ...edge, sheet: { width: 3001, height: 3001, quantity: 1 } })).count, 0);
   const long = durma({ sheet: { width: 6000, height: 1500, quantity: 1 }, parts: [{ id: 0, width: 1000, height: 500, quantity: 6 }] });
   const lr = optimize(long); assert.ok(lr.count > 0); verifyShear(lr, long);
 });
