@@ -62,7 +62,17 @@
     if (!shear && kerf.disabled) kerf.value = kerf.dataset.previous ?? kerf.value;
     kerf.disabled = shear;
     kerf.title = shear ? 'A shear removes no material' : '';
+    $('#kerf-hint').textContent = shear ? 'Set by the machine: a shear removes no material.' : 'Material removed by the blade. Use 0 for shearing.';
     $('#machine-hint').textContent = machineHints[machine];
+    checkMachineLimits();
+  }
+  // Early warning for sheets the shear cannot cut at all, before the user calculates.
+  function checkMachineLimits() {
+    const profile = Cutwise.MACHINES[$('[name="machine"]:checked').value], warning = $('#machine-warning');
+    const w = mm($('#stock-width').value, $('[aria-label="Sheet width units"]').value), h = mm($('#stock-height').value, $('[aria-label="Sheet height units"]').value);
+    const tooLong = profile.shear && w > profile.maxCutLength && h > profile.maxCutLength;
+    warning.hidden = !tooLong;
+    warning.textContent = tooLong ? `This ${fmt(w)} × ${fmt(h)} mm sheet is longer than the ${profile.maxCutLength} mm blade in both directions, so the ${profile.name} cannot cut it. Pre-cut it to ${profile.maxCutLength} mm or less on one side first.` : '';
   }
   function addPart(width = '', height = '', quantity = 1, focus = false) {
     if (partList.children.length >= 50) return;
@@ -226,8 +236,13 @@
     const side = c.gauge.side === 'near' ? (c.axis === 'x' ? 'left' : 'top') : (c.axis === 'x' ? 'right' : 'bottom');
     return ` · back gauge ${fmt(c.gauge.distance)} mm (${side} part behind the blade)${c.preparatory ? ' · strip cut to bring the next cut within gauge range' : ''}`;
   }
-  function cutText(c, index) {
-    return `Cut ${index + 1}: ${c.axis === 'x' ? 'Vertical' : 'Horizontal'} · ${fmt(c.offset)} mm from the ${c.axis === 'x' ? 'left' : 'top'} edge of this rectangle${gaugeText(c)}`;
+  function cutText(c, index, withGauge = true) {
+    return `Cut ${index + 1}: ${c.axis === 'x' ? 'Vertical' : 'Horizontal'} · ${fmt(c.offset)} mm from the ${c.axis === 'x' ? 'left' : 'top'} edge of this rectangle${withGauge ? gaugeText(c) : ''}`;
+  }
+  function gaugeSide(c) {
+    if (!c.gauge) return '';
+    const side = c.gauge.side === 'near' ? (c.axis === 'x' ? 'Left' : 'Top') : (c.axis === 'x' ? 'Right' : 'Bottom');
+    return ` · ${side} part behind the blade${c.preparatory ? ' · strip cut so the next cut fits the gauge' : ''}`;
   }
   function cutDetail(c) {
     return `Rectangle ${fmt(c.rect.width)} × ${fmt(c.rect.height)} mm at X ${fmt(c.rect.x)}, Y ${fmt(c.rect.y)} · cut length ${fmt(c.length)} mm`;
@@ -246,7 +261,7 @@
     const trimArea = data.sheet.width * data.sheet.height - (data.sheet.width - 2 * data.trim) * (data.sheet.height - 2 * data.trim);
     $('#material-details').replaceChildren(...[
       `This sheet: ${(100 * sheet.usedArea / (data.sheet.width * data.sheet.height)).toFixed(1)}% used`,
-      `Offcuts: ${area(remainingArea)}`, `Blade loss: ${area(sheet.kerfArea)}`, ...(data.trim ? [`Reserved edge: ${area(trimArea)}`] : [])
+      `Offcuts: ${area(remainingArea)}`, ...(result.machine && result.machine.shear ? [] : [`Blade loss: ${area(sheet.kerfArea)}`]), ...(data.trim ? [`Reserved edge: ${area(trimArea)}`] : [])
     ].map(t => node('span', t)));
     const firstCut = sheet.cuts[0];
     $('#cut-recommendation').textContent = firstCut ? `Suggested start: ${firstCut.axis === 'x' ? 'vertical' : 'horizontal'} cut, ${fmt(firstCut.offset)} mm from the usable rectangle’s ${firstCut.axis === 'x' ? 'left' : 'top'} edge${gaugeText(firstCut)}. ${data.trim ? 'Prepare the trimmed rectangle first. ' : ''}Compared ${result.strategiesCompared} layouts across the available sheets. Follow the numbered sequence below.` : 'No separation cuts are needed: the piece matches the usable sheet.';
@@ -256,9 +271,16 @@
     sheet.cuts.forEach((c, i) => {
       const li = node('li'), button = node('button', undefined, 'cut-step'); button.type = 'button';
       button.setAttribute('aria-pressed', String(i === selectedCut));
-      const text = node('span', cutText(c, i).replace(`Cut ${i + 1}: `, ''));
-      text.append(node('span', cutDetail(c), 'step-detail'));
+      const text = node('span', cutText(c, i, false).replace(`Cut ${i + 1}: `, ''), 'step-text');
+      text.append(node('span', cutDetail(c) + gaugeSide(c), 'step-detail'));
       button.append(node('span', String(i + 1), 'step-number'), text);
+      if (c.gauge) {
+        // Flag gauge moves: an unchanged setting lets the operator cut straight away.
+        const previous = sheet.cuts[i - 1], same = previous && previous.gauge && Math.abs(previous.gauge.distance - c.gauge.distance) < 1e-6;
+        const chip = node('span', undefined, `gauge-chip${same ? ' same' : ''}`);
+        chip.append(node('small', same ? 'Gauge · no move' : 'Set gauge'), document.createTextNode(`${fmt(c.gauge.distance)} mm`));
+        button.append(chip);
+      }
       button.addEventListener('click', () => {
         selectedCut = selectedCut === i ? -1 : i;
         $$('.cut-step').forEach((b, j) => b.setAttribute('aria-pressed', String(j === selectedCut)));
@@ -277,6 +299,10 @@
   }
   function renderSummary(result, data) {
     lastPlan = { result, data }; sheetIndex = 0; selectedCut = -1; stale = false;
+    const shear = !!(result.machine && result.machine.shear);
+    $('#machine-chip').hidden = !shear;
+    $('#machine-chip').textContent = shear ? result.machine.name.replace(' hydraulic guillotine shear', ' shear') : '';
+    $('#kerf-legend').hidden = shear;
     $('#status').classList.remove('stale');
     $('#fit-stat').textContent = data.mode === 'capacity' ? `${result.count}` : `${result.count} / ${result.total}`;
     $('#yield-stat').textContent = `${(result.sheets.length ? 100 * result.area / (result.sheets.length * data.sheet.width * data.sheet.height) : 0).toFixed(1)}%`;
@@ -339,13 +365,18 @@
     $('#optimize').disabled = true; $('#optimize').textContent = 'Calculating…';
     try {
       const result = await calculate(data);
-      if (revision === started) renderSummary(result, data);
+      if (revision === started) {
+        renderSummary(result, data);
+        // On one-column layouts the plan sits below the form; bring it into view.
+        const results = $('.results');
+        if (results.getBoundingClientRect().top > innerHeight * .6) results.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+      }
       else showError('Inputs changed during calculation. Calculate again to use your latest values.');
     } catch (error) { showError(error.message); }
     finally { busy = false; $('#optimize').disabled = false; $('#optimize').textContent = 'Calculate cutting plan'; }
   });
   $('#add-part').addEventListener('click', () => { addPart('', '', 1, true); changed(); });
-  $('#planner-form').addEventListener('input', e => { if (e.target.matches('[name="mode"]')) updateRows(); if (e.target.matches('[name="machine"]')) updateMachine(); changed(); });
+  $('#planner-form').addEventListener('input', e => { if (e.target.matches('[name="mode"]')) updateRows(); if (e.target.matches('[name="machine"]')) updateMachine(); if (e.target.matches('#stock-width, #stock-height')) checkMachineLimits(); changed(); });
   $('#job-name').addEventListener('input', changed);
   $$('.unit-select, #part-unit').forEach(select => {
     select.dataset.previous = select.value;

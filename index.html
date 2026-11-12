@@ -120,7 +120,7 @@
       .stat { padding: 0 13px; border-right: 1px solid var(--line); min-width: 0; }
       .stat:first-child { padding-left: 0; }
       .stat:last-child { border-right: 0; }
-      .stat-label { display: block; margin-bottom: 5px; color: var(--subtle); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+      .stat-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; margin-bottom: 5px; color: var(--subtle); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
       .stat-value { display: block; overflow: hidden; color: var(--ink); font-size: 18px; font-weight: 720; letter-spacing: -.04em; text-overflow: ellipsis; white-space: nowrap; }
       .stat-value small { color: var(--muted); font-size: 11px; font-weight: 550; letter-spacing: 0; }
       .visual-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 11px; }
@@ -182,7 +182,8 @@
       #save-state { color: var(--muted); font-size: 11px; margin-right: 6px; }
       .secondary { min-height: 38px; padding: 7px 12px; border: 1px solid var(--control-line); border-radius: 7px; background: var(--control-bg); color: var(--ink); font-size: 12px; font-weight: 650; white-space: nowrap; }
       .secondary:hover:not(:disabled) { border-color: var(--green); color: var(--green); }
-      .unit-row { grid-template-columns: minmax(0, 1fr) 65px; }
+      .unit-row { grid-template-columns: minmax(0, 1fr) 76px; }
+      .unit-row select, .parts-units select { padding: 0 6px; }
       .stock-extra { display: grid; grid-template-columns: 116px 1fr; align-items: center; gap: 16px; margin-top: 16px; }
       .hint { font-size: 11px; line-height: 1.6; }
       .mode-switch { display: flex; gap: 5px; border: 0; padding: 0; margin: 0; }
@@ -194,6 +195,12 @@
       .parts-units select { width: 60px; }
       .parts-title { gap: 6px; }
       .objective-control { margin: 16px 0 22px; }
+      .machine-chip { display: inline-block; margin-left: 6px; padding: 3px 8px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); font-size: 10px; font-weight: 650; letter-spacing: 0; vertical-align: 2px; }
+      .machine-warning { margin: -8px 0 18px; padding: 8px 10px; border-radius: 7px; background: var(--error-bg); color: var(--error-text); font-size: 11px; line-height: 1.5; }
+      .step-text { flex: 1; min-width: 0; }
+      .gauge-chip { flex-shrink: 0; display: grid; justify-items: end; gap: 1px; padding: 5px 8px; border-radius: 6px; background: var(--mint); color: var(--green); font-size: 12px; font-weight: 750; white-space: nowrap; }
+      .gauge-chip small { color: var(--muted); font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+      .gauge-chip.same { background: transparent; border: 1px dashed var(--line); }
       .cut-recommendation { padding: 12px 14px; margin: 14px 0; border-left: 3px solid var(--green); background: var(--mint); font-size: 12px; line-height: 1.7; }
       .parts-head, .part-row { grid-template-columns: 25px minmax(0, 1fr) minmax(0, 1fr) 52px 28px; gap: 6px; }
       .part-id { font-size: 11px; font-weight: 750; }
@@ -233,8 +240,8 @@
       #offcut-list { font-size: 11px; line-height: 1.9; padding: 6px 0; }
       .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
       #print-sheets, .print-only { display: none; }
-      @media (max-width: 940px) { .workspace { grid-template-columns: minmax(330px, 365px) minmax(0, 1fr); } .unit-row { grid-template-columns: minmax(0,1fr) 70px; gap: 5px; } .parts-title { align-items: flex-start; flex-wrap: wrap; } }
-      @media (max-width: 760px) { .workspace { grid-template-columns: 1fr; } .unit-row { grid-template-columns: minmax(0,1fr) 76px; } .job-bar { align-items: stretch; flex-direction: column; } .job-bar > div:first-child { width: 100%; } .job-actions { flex-wrap: wrap; } #save-state { flex: 1; } .shell { padding: 20px 14px 36px; } .stat-value { font-size: 22px; } .parts-title { flex-direction: row; align-items: center; } }
+      @media (max-width: 940px) { .workspace { grid-template-columns: minmax(330px, 365px) minmax(0, 1fr); } .unit-row { grid-template-columns: minmax(0,1fr) 76px; gap: 5px; } .parts-title { align-items: flex-start; flex-wrap: wrap; } }
+      @media (max-width: 760px) { .workspace { grid-template-columns: 1fr; } .unit-row { grid-template-columns: minmax(0,1fr) 76px; } .job-bar { align-items: stretch; flex-direction: column; } .job-bar > div:first-child { width: 100%; } .job-actions { flex-wrap: wrap; } .cut-steps { max-height: 70vh; } #save-state { flex: 1; } .shell { padding: 20px 14px 36px; } .stat-value { font-size: 22px; } .parts-title { flex-direction: row; align-items: center; } }
       @media print {
         :root { color-scheme: light; --ink: #111; --muted: #444; --subtle: #555; --line: #ccc; --paper: #fff; --canvas: #fff; }
         body { min-width: 0; background: white; color: #111; }
@@ -287,7 +294,12 @@
       </div>
       <div class="workspace">
         <form class="panel form-panel" id="planner-form" aria-label="Cut plan inputs" novalidate>
-          <div class="section-title"><h2>Available material</h2><span class="step">01 / SETUP</span></div>
+          <div class="section-title"><h2>Cutting machine</h2><span class="step">01 / MACHINE</span></div>
+          <fieldset class="mode-switch machine-switch"><legend class="sr-only">Cutting machine</legend><label><input type="radio" name="machine" value="generic" checked> Generic</label><label><input type="radio" name="machine" value="durma-sbt-3006"> Durma SBT 3006 shear</label></fieldset>
+          <p id="machine-hint" class="hint">No machine limits. Enter your blade width below.</p>
+          <p id="machine-warning" class="machine-warning" role="status" hidden></p>
+          <div class="divider"></div>
+          <div class="section-title"><h2>Available material</h2><span class="step">02 / SETUP</span></div>
           <div class="stock-grid">
             <div><label class="field-label" for="stock-width">Width</label><div class="unit-row"><input id="stock-width" type="number" min="0.001" step="any" value="2400"><select class="unit-select" aria-label="Sheet width units"><option value="mm">mm</option><option value="m">m</option></select></div></div>
             <div><label class="field-label" for="stock-height">Height</label><div class="unit-row"><input id="stock-height" type="number" min="0.001" step="any" value="1200"><select class="unit-select" aria-label="Sheet height units"><option value="mm">mm</option><option value="m">m</option></select></div></div>
@@ -298,16 +310,14 @@
           <fieldset class="mode-switch"><legend class="field-label">What do you need?</legend><label><input type="radio" name="mode" value="order" checked> Cut an order</label><label><input type="radio" name="mode" value="capacity"> How many fit?</label></fieldset>
           <p id="mode-hint" class="hint">Enter the sizes and quantities you need.</p>
           <div id="objective-control" class="objective-control"><label class="field-label" for="objective">Optimization priority</label><select id="objective"><option value="material">Use the most metal</option><option value="pieces">Fit the most pieces</option></select><p class="hint">If the whole order cannot fit, using more metal can mean cutting fewer, larger pieces. Your requested sizes and quantities stay fixed.</p></div>
-          <div class="section-title parts-title"><h2>Pieces to cut</h2><div class="parts-units"><span class="step">02 / PARTS</span><span>Input:</span><select id="part-unit" aria-label="Piece dimension units"><option value="mm">mm</option><option value="m">m</option></select></div></div>
+          <div class="section-title parts-title"><h2>Pieces to cut</h2><div class="parts-units"><span class="step">03 / PARTS</span><span>Input:</span><select id="part-unit" aria-label="Piece dimension units"><option value="mm">mm</option><option value="m">m</option></select></div></div>
           <div class="parts-head" aria-hidden="true"><span>ID</span><span>Width</span><span>Height</span><span>Qty</span><span></span></div>
           <div id="part-list" class="part-list"></div>
           <button id="add-part" class="add-btn" type="button">＋ Add another size</button>
 
           <div class="divider"></div>
-          <fieldset class="mode-switch machine-switch"><legend class="field-label">Cutting machine</legend><label><input type="radio" name="machine" value="generic" checked> Generic</label><label><input type="radio" name="machine" value="durma-sbt-3006"> Durma SBT 3006 shear</label></fieldset>
-          <p id="machine-hint" class="hint">No machine limits. Enter your blade width below.</p>
           <div class="options">
-            <div><label class="field-label" for="kerf">Blade width / kerf <small>mm</small></label><input id="kerf" type="number" min="0" step="any" value="3"><p class="hint">Material removed by the blade. Use 0 for shearing.</p></div>
+            <div><label class="field-label" for="kerf">Blade width / kerf <small>mm</small></label><input id="kerf" type="number" min="0" step="any" value="3"><p class="hint" id="kerf-hint">Material removed by the blade. Use 0 for shearing.</p></div>
             <div><label class="field-label" for="trim">Edge trim <small>mm per side</small></label><input id="trim" type="number" min="0" step="any" value="0"><p class="hint">Reserve an edge on all four sides.</p></div>
           </div>
           <label class="checkbox-line rotation"><input id="allow-rotation" type="checkbox" checked> Allow pieces to rotate 90°</label>
@@ -321,10 +331,10 @@
         </form>
 
         <section class="panel result-card results" aria-label="Cut plan results">
-          <div class="result-heading"><h2>Your cutting plan</h2><span id="status" class="status-pill" role="status"><i class="status-dot"></i>Ready to optimize</span></div>
+          <div class="result-heading"><h2>Your cutting plan <span id="machine-chip" class="machine-chip" hidden></span></h2><span id="status" class="status-pill" role="status"><i class="status-dot"></i>Ready to optimize</span></div>
           <div class="stats">
             <div class="stat"><span class="stat-label">Pieces fit</span><span class="stat-value" id="fit-stat">—</span></div>
-            <div class="stat"><span class="stat-label">Material used</span><span class="stat-value" id="yield-stat">—</span></div>
+            <div class="stat"><span class="stat-label">Metal used</span><span class="stat-value" id="yield-stat">—</span></div>
             <div class="stat"><span class="stat-label">Left to cut</span><span class="stat-value" id="left-stat">—</span></div>
             <div class="stat"><span class="stat-label">Sheets used</span><span class="stat-value" id="sheets-stat">—</span></div>
           </div>
@@ -338,7 +348,7 @@
             </div>
             <svg id="layout" role="img" aria-label="Optimized sheet cutting layout" hidden></svg>
           </div>
-          <div class="legend"><span><i></i>Part to cut</span><span><i class="waste"></i>Reusable offcut</span><span><i class="kerf"></i>Blade loss</span></div>
+          <div class="legend"><span><i></i>Part to cut</span><span><i class="waste"></i>Reusable offcut</span><span id="kerf-legend"><i class="kerf"></i>Blade loss</span></div>
           <p id="cut-recommendation" class="cut-recommendation" hidden></p>
           <div id="material-details" class="material-details" hidden></div>
           <div class="cut-list">
